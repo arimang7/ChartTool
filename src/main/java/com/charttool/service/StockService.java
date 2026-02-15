@@ -53,10 +53,10 @@ public class StockService {
     @Value("${app.telegram.api-url}")
     private String telegramApiUrl;
 
-    @Value("${app.python.path:../.venv/Scripts/python.exe}")
+    @Value("${app.python.path:python3}")
     private String pythonPath;
 
-    @Value("${app.python.script-path:../yfinance_adapter.py}")
+    @Value("${app.python.script-path:./yfinance_adapter.py}")
     private String scriptPath;
 
     private final ObjectMapper objectMapper = new ObjectMapper();

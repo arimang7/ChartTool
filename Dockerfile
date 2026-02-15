@@ -7,11 +7,15 @@ RUN mvn clean package -DskipTests
 # 2. 실행 스테이지
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-# 빌드 스테이지에서 생성된 jar 파일을 복사 (파일명 주의)
+
+# --- Python 및 필수 라이브러리 설치 추가 ---
+RUN apt-get update && apt-get install -y python3 python3-pip && \
+    pip3 install --no-cache-dir yfinance pandas --break-system-packages
+
+# 빌드된 JAR 복사
 COPY --from=build /app/target/chart-tool-0.0.1-SNAPSHOT.jar app.jar
+# Python 스크립트 복사 (위치 주의)
+COPY src/main/resources/yfinance_adapter.py /app/yfinance_adapter.py
 
-# 포트 설정 (Render는 기본적으로 8080 사용)
 EXPOSE 8080
-
-# 실행 명령
 ENTRYPOINT ["java", "-jar", "app.jar"]
