@@ -1,0 +1,37 @@
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            scope:
+              - openid
+              - email
+              - profile
+            redirect-uri: "{baseUrl}/login/oauth2/code/google"
+            authorization-grant-type: authorization_code
+        provider:
+          google:
+            user-name-attribute: sub
+
+server:
+  port: 8080
+
+app:
+  gemini:
+    api-key: ${GEMINI_API_KEY}
+    model: gemini-flash-latest
+    base-url: https://generativelanguage.googleapis.com/v1beta/models
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN}
+    chat-id: ${TELEGRAM_CHAT_ID}
+    api-url: https://api.telegram.org/bot/
+
+logging:
+  level:
+    org.springframework.security: INFO
+    com.charttool: DEBUG
+  charset:
+    console: UTF-8
