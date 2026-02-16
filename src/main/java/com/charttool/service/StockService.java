@@ -73,6 +73,7 @@ public class StockService {
             // 작업 디렉토리를 프로젝트 루트(java 폴더의 부모)로 설정하면 상대경로가 더 잘 작동함
             pb.directory(new File(System.getProperty("user.dir")));
 
+            long yfinanceStart = System.currentTimeMillis();
             Process process = pb.start();
 
             // 결과 읽기
@@ -84,6 +85,8 @@ public class StockService {
             }
 
             int exitCode = process.waitFor();
+            long yfinanceEnd = System.currentTimeMillis();
+
             if (exitCode != 0) {
                 throw new RuntimeException("Python script failed with exit code " + exitCode);
             }
@@ -159,9 +162,13 @@ public class StockService {
                 }
             }
 
+            long patternStart = System.currentTimeMillis();
             Map<String, Object> patternData = detectHarmonicPatterns(series);
+            long patternEnd = System.currentTimeMillis();
 
             Map<String, Object> result = new HashMap<>();
+            result.put("yfinanceDuration", yfinanceEnd - yfinanceStart);
+            result.put("patternDuration", patternEnd - patternStart);
             result.put("price", currentPrice);
             result.put("rsi", rsi.getValue(series.getEndIndex()).doubleValue());
             result.put("upper", upperBB.getValue(series.getEndIndex()).doubleValue());
@@ -222,7 +229,8 @@ public class StockService {
     }
 
     @SuppressWarnings("unchecked")
-    public String getGeminiStrategy(String ticker, Map<String, Object> data) {
+    public Map<String, Object> getGeminiStrategyWithTime(String ticker, String companyName, Map<String, Object> data) {
+        long geminiStart = System.currentTimeMillis();
         StringBuilder newsContext = new StringBuilder();
         List<Map<String, Object>> news = (List<Map<String, Object>>) data.get("news");
         if (news != null && !news.isEmpty()) {
@@ -233,7 +241,7 @@ public class StockService {
         }
 
         String prompt = String.format(
-                "당신은 세계적인 수준의 금융 분석가입니다. %s에 대한 다음의 **실시간 시장 데이터 및 최신 뉴스**를 바탕으로 분석해 주세요.\n" +
+                "당신은 세계적인 수준의 금융 분석가입니다. **%s (%s)** 종목에 대한 다음의 **실시간 시장 데이터 및 최신 뉴스**를 바탕으로 분석해 주세요.\n" +
                         "- 현재가: %.2f\n" +
                         "- RSI(14): %.2f\n" +
                         "- 볼린저 밴드: 상단 %.2f / 하단 %.2f\n" +
@@ -245,9 +253,11 @@ public class StockService {
                         "하모닉 패턴 분석 시에는 각 지점(X, A, B, C, D) 간의 피보나치 비율(0.618, 0.786 등)을 고려하여 타점을 설정해 주세요.\n" +
                         "분석 결과는 반드시 마크다운(Markdown) 형식을 사용하여 제목, 리스트, 강조 등을 적절히 활용하고, " +
                         "행바꿈과 적절한 이모지(아이콘)를 사용하여 가독성 있게 작성하세요.\n" +
+                        "반드시 종목명(%s)을 확인하여 정확한 기업 정보를 바탕으로 의견을 주어야 합니다. 타 종목과 혼동해서는 안 됩니다.\n" +
                         "만약 데이터가 부족하거나 분석이 어려운 경우에도 현재 상황에 대한 최선의 조언을 포함해 주세요.",
-                ticker, data.get("price"), data.get("rsi"), data.get("upper"), data.get("lower"), data.get("pattern"),
-                newsContext.toString());
+                companyName, ticker, data.get("price"), data.get("rsi"), data.get("upper"), data.get("lower"),
+                data.get("pattern"),
+                newsContext.toString(), companyName);
 
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
@@ -260,6 +270,7 @@ public class StockService {
                     .bodyToMono(Map.class)
                     .block();
 
+            long geminiEnd = System.currentTimeMillis();
             if (response != null && response.containsKey("candidates")) {
                 List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.get("candidates");
                 if (candidates != null && !candidates.isEmpty()) {
@@ -273,17 +284,20 @@ public class StockService {
                                 logger.info("Gemini AI 분석 결과 생성 성공 (길이: {})", text.length());
                                 String result = text.trim();
                                 saveReportToFile(ticker, result);
-                                return result;
+                                return Map.of("report", result, "geminiDuration", geminiEnd - geminiStart);
                             }
                         }
                     }
                 }
             }
             logger.warn("Gemini API 응답에서 유효한 텍스트를 찾을 수 없습니다. 응답 구조: {}", response);
-            return "AI 분석 결과를 생성하지 못했습니다. API 응답을 확인해 주세요.";
+            return Map.of("report", "AI 분석 결과를 생성하지 못했습니다. API 응답을 확인해 주세요.", "geminiDuration",
+                    geminiEnd - geminiStart);
         } catch (Exception e) {
+            long geminiEnd = System.currentTimeMillis();
             logger.error("Gemini API 호출 중 예외 발생: {}", e.getMessage(), e);
-            return "AI 분석을 가져오는 중 오류가 발생했습니다: " + e.getMessage();
+            return Map.of("report", "AI 분석을 가져오는 중 오류가 발생했습니다: " + e.getMessage(), "geminiDuration",
+                    geminiEnd - geminiStart);
         }
     }
 

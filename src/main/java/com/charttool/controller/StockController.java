@@ -81,12 +81,18 @@ public class StockController {
     public Map<String, Object> getAiAnalysis(@RequestParam String ticker) throws Exception {
         // AI 분석 버튼 클릭 시 최신 데이터를 다시 가져와서 분석
         var analysis = stockService.getAnalysis(ticker);
-        String report = stockService.getGeminiStrategy(ticker, analysis);
+        String companyName = (String) analysis.getOrDefault("name", ticker);
+        var strategyData = stockService.getGeminiStrategyWithTime(ticker, companyName, analysis);
+
         return Map.of(
-                "report", report,
+                "report", strategyData.get("report"),
                 "confidenceScore", analysis.getOrDefault("confidenceScore", 0),
                 "patternDetails", analysis.getOrDefault("patternDetails", Map.of()),
-                "targets", analysis.getOrDefault("targets", Map.of()));
+                "targets", analysis.getOrDefault("targets", Map.of()),
+                "durations", Map.of(
+                        "yfinance", analysis.getOrDefault("yfinanceDuration", 0L),
+                        "pattern", analysis.getOrDefault("patternDuration", 0L),
+                        "gemini", strategyData.getOrDefault("geminiDuration", 0L)));
     }
 
     @PostMapping("/api/send-telegram")

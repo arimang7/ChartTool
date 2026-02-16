@@ -95,6 +95,7 @@ mvn clean install
 
 # Run the application
 mvn spring-boot:run
+ - local : mvn spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
 ### Via IDE

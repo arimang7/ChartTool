@@ -313,11 +313,24 @@
             </div>
 
             <div id="ai-status" class="status-container">
-                <div class="status-step" id="step-1"><i class="far fa-circle"></i> 📊 기술적 지표 및 증권사 리포트 분석 중...</div>
-                <div class="status-step" id="step-2"><i class="far fa-circle"></i> 📐 하모닉 패턴(Gartley, Cypher, AB=CD) 탐색
-                    중...</div>
-                <div class="status-step" id="step-3"><i class="far fa-circle"></i> 🤖 Gemini LLM 전략 생성 중...</div>
-                <div class="status-step" id="step-4"><i class="far fa-circle"></i> 🔔 알림 조건 확인 중...</div>
+                <div class="status-step" id="step-1">
+                    <div style="display: flex; justify-content: space-between; width: 100%;">
+                        <span><i class="far fa-circle"></i> 📊 기술적 지표 및 증권사 리포트 분석</span>
+                        <span class="step-time" style="font-size: 0.8em; color: #666;"></span>
+                    </div>
+                </div>
+                <div class="status-step" id="step-2">
+                    <div style="display: flex; justify-content: space-between; width: 100%;">
+                        <span><i class="far fa-circle"></i> 📐 하모닉 패턴(Gartley, Cypher, AB=CD) 탐색</span>
+                        <span class="step-time" style="font-size: 0.8em; color: #666;"></span>
+                    </div>
+                </div>
+                <div class="status-step" id="step-3">
+                    <div style="display: flex; justify-content: space-between; width: 100%;">
+                        <span><i class="far fa-circle"></i> 🤖 Gemini LLM 전략 생성</span>
+                        <span class="step-time" style="font-size: 0.8em; color: #666;"></span>
+                    </div>
+                </div>
             </div>
 
             <div id="ai-btn-container">
@@ -469,8 +482,7 @@
             const steps = [
                 { id: 'step-1', delay: 0 },
                 { id: 'step-2', delay: 600 },
-                { id: 'step-3', delay: 1200 },
-                { id: 'step-4', delay: 1800 }
+                { id: 'step-3', delay: 1200 }
             ];
 
             steps.forEach((step, index) => {
@@ -501,12 +513,25 @@
                 // 서버 응답이 오면 타이머 중지
                 clearInterval(timerInterval);
 
-                // 모든 단계를 완료 상태로 즉시 변경
-                ["step-1", "step-2", "step-3", "step-4"].forEach(id => {
-                    const el = document.getElementById(id);
+                const durations = data.durations;
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('ko-KR', { hour12: false });
+
+                // 각 단계 완료 및 시간 표시
+                const stepConfigs = [
+                    { id: 'step-1', duration: durations.yfinance },
+                    { id: 'step-2', duration: durations.pattern },
+                    { id: 'step-3', duration: durations.gemini }
+                ];
+
+                stepConfigs.forEach(config => {
+                    const el = document.getElementById(config.id);
                     if (el) {
                         el.classList.remove('active');
                         el.querySelector('i').className = 'fas fa-check';
+                        const timeSpan = el.querySelector('.step-time');
+                        timeSpan.innerHTML = `<span style="color: #ff4b4b;">(${ (config.duration/1000).toFixed(2) }s)</span> [${timeStr}]`;
+                        timeSpan.style.color = "#888";
                     }
                 });
 
