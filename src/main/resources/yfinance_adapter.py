@@ -3,6 +3,15 @@ import yfinance as yf
 import json
 import pandas as pd
 import traceback
+import requests
+
+# Rate limit mitigation for Render: use a browser-like User-Agent
+SESSION = requests.Session()
+SESSION.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                  'AppleWebKit/537.36 (KHTML, like Gecko) '
+                  'Chrome/121.0.0.0 Safari/537.36'
+})
 
 def fetch_stock_data(ticker, period="1y"):
     try:
@@ -11,15 +20,15 @@ def fetch_stock_data(ticker, period="1y"):
         if ticker.isdigit() and len(ticker) == 6:
             # Try KOSPI (.KS) first, then KOSDAQ (.KQ)
             ticker = original_ticker + ".KS"
-            stock = yf.Ticker(ticker)
+            stock = yf.Ticker(ticker, session=SESSION)
             df = stock.history(period=period, interval="1d")
             
             if df.empty:
                 ticker = original_ticker + ".KQ"
-                stock = yf.Ticker(ticker)
+                stock = yf.Ticker(ticker, session=SESSION)
                 df = stock.history(period=period, interval="1d")
         else:
-            stock = yf.Ticker(ticker)
+            stock = yf.Ticker(ticker, session=SESSION)
             df = stock.history(period=period, interval="1d")
         
         if df.empty:
