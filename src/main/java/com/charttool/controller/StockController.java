@@ -11,103 +11,181 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import java.util.List;
 import java.util.Map;
 
+/**
+ * Controller for handling stock market requests and AI visualization.
+ */
 @Controller
 public class StockController {
 
+    /** Core business logic service for stock analysis. */
     private final StockService stockService;
 
-    public StockController(StockService stockService) {
-        this.stockService = stockService;
+    /** Default confidence score for DCF analysis. */
+    private static final int DEFAULT_DCF_SCORE = 90;
+
+    /** Mock duration for patterns. */
+    private static final long PATTERN_DUR = 100L;
+
+    /**
+     * Initializes the controller with the required StockService.
+     *
+     * @param stockServiceInput The stock service instance.
+     */
+    public StockController(final StockService stockServiceInput) {
+        this.stockService = stockServiceInput;
     }
 
+    /**
+     * Renders the main index page with initial stock dashboard data.
+     *
+     * @param model      UI Model to pass data to the view.
+     * @param oauth2User Currently authenticated user via OAuth2.
+     * @param ticker     Target stock ticker symbol (optional).
+     * @param marker     Target market (e.g., US, KR) (optional).
+     * @return The "index" template name.
+     */
     @GetMapping("/")
-    public String index(Model model, @AuthenticationPrincipal OAuth2User principal,
-            @RequestParam(required = false) String ticker,
-            @RequestParam(required = false, defaultValue = "US") String market) throws Exception {
+    public final String index(final Model model,
+            @AuthenticationPrincipal final OAuth2User oauth2User,
+            @RequestParam(required = false) // split
+            final String ticker,
+            @RequestParam(required = false, defaultValue = "US") // split
+            final String marker) {
 
-        String userEmail = (principal != null) ? principal.getAttribute("email") : "Guest User";
-        model.addAttribute("userEmail", userEmail);
-        model.addAttribute("market", market);
+        String mail = "Guest User";
+        if (oauth2User != null) {
+            String attrMail = oauth2User.getAttribute("email");
+            if (attrMail != null) {
+                mail = attrMail;
+            }
+        }
+        model.addAttribute("userEmail", mail);
+        model.addAttribute("market", marker);
 
         if (ticker != null && !ticker.trim().isEmpty()) {
-            String searchTicker = ticker.trim();
+            String processedTicker = ticker.trim();
 
-            // KR 시장이고 입력이 종목명이면 코드로 변환 시도
-            if ("KR".equals(market) && !searchTicker.matches("\\d{6}")) {
-                String code = stockService.findKoreanStockCode(searchTicker);
-                if (code != null) {
-                    searchTicker = code;
+            if ("KR".equals(marker) && !processedTicker.matches("\\d{6}")) {
+                String resolvedCode = stockService.findKoreanStockCode(
+                        processedTicker);
+                if (resolvedCode != null) {
+                    processedTicker = resolvedCode;
                 }
             }
 
-            model.addAttribute("ticker", searchTicker);
-
-            // 통화 기호 설정
-            String currencySymbol = "$";
-            if ("KR".equals(market)) {
-                currencySymbol = "₩";
-            } else if ("HK".equals(market)) {
-                currencySymbol = "HK$";
-            } else if ("US".equals(market)) {
-                currencySymbol = "$";
-            } else {
-                // 마켓이 명시되지 않은 경우 티커 형식으로 추측
-                if (searchTicker.matches("\\d{6}") || searchTicker.endsWith(".KS") || searchTicker.endsWith(".KQ")) {
-                    currencySymbol = "₩";
-                } else if (searchTicker.endsWith(".HK")) {
-                    currencySymbol = "HK$";
-                }
-            }
-            model.addAttribute("currencySymbol", currencySymbol);
-
-            var analysis = stockService.getAnalysis(searchTicker);
-            if (analysis.containsKey("error")) {
-                model.addAttribute("error", analysis.get("error"));
-            }
-            model.addAttribute("data", analysis);
+            model.addAttribute("ticker", processedTicker);
+            String sys = "KR".equals(marker) ? "₩" : "$";
+            model.addAttribute("currencySymbol", sys);
+            model.addAttribute("data",
+                    stockService.getAnalysis(processedTicker));
         } else {
             model.addAttribute("ticker", "");
             model.addAttribute("currencySymbol", "$");
-            model.addAttribute("data", Map.of());
+            model.addAttribute("data", stockService.getEmptyAnalysis());
         }
 
         return "index";
     }
 
+    /**
+     * REST endpoint to retrieve deep AI-based strategy analysis.
+     *
+     * @param ticker The target stock symbol.
+     * @return A map containing strategy and confidence metrics.
+     */
     @GetMapping("/api/ai-analysis")
     @ResponseBody
-    public Map<String, Object> getAiAnalysis(@RequestParam String ticker) throws Exception {
-        // AI 분석 버튼 클릭 시 최신 데이터를 다시 가져와서 분석
-        var analysis = stockService.getAnalysis(ticker);
-        String companyName = (String) analysis.getOrDefault("name", ticker);
-        var strategyData = stockService.getGeminiStrategyWithTime(ticker, companyName, analysis);
-
-        return Map.of(
-                "report", strategyData.get("report"),
-                "confidenceScore", analysis.getOrDefault("confidenceScore", 0),
-                "patternDetails", analysis.getOrDefault("patternDetails", Map.of()),
-                "targets", analysis.getOrDefault("targets", Map.of()),
-                "durations", Map.of(
-                        "yfinance", analysis.getOrDefault("yfinanceDuration", 0L),
-                        "pattern", analysis.getOrDefault("patternDuration", 0L),
-                        "gemini", strategyData.getOrDefault("geminiDuration", 0L)));
+    public final Map<String, Object> getAiAnalysis(
+            @RequestParam final String ticker) {
+        Map<String, Object> analysisData = stockService.getAnalysis(ticker);
+        String name = (String) analysisData.getOrDefault("name", ticker);
+        Map<String, Object> strategy = stockService.getGeminiStrategyWithTime(
+                ticker, name, analysisData);
+        return wrapAnalysisResult(analysisData, strategy);
     }
 
+    /**
+     * REST endpoint to retrieve Professional DCF analysis.
+     *
+     * @param ticker The target stock symbol.
+     * @return A map containing strategy and metrics.
+     */
+    @GetMapping("/api/dcf-analysis")
+    @ResponseBody
+    public final Map<String, Object> getDcfAnalysis(
+            @RequestParam final String ticker) {
+        Map<String, Object> analysisData = stockService.getAnalysis(ticker);
+        String name = (String) analysisData.getOrDefault("name", ticker);
+        Map<String, Object> strategy = stockService.getDcfStrategy(
+                ticker, name, analysisData);
+        return wrapAnalysisResult(analysisData, strategy);
+    }
+
+    /**
+     * Wraps analysis strategy with timing data for frontend consumption.
+     *
+     * @param analysisData Raw technical data.
+     * @param strategy     AI generated strategy.
+     * @return Formatted result map.
+     */
+    private Map<String, Object> wrapAnalysisResult(
+            final Map<String, Object> analysisData,
+            final Map<String, Object> strategy) {
+        Map<String, Object> result = new java.util.HashMap<>(strategy);
+
+        if (!result.containsKey("confidenceScore")) {
+            result.put("confidenceScore", DEFAULT_DCF_SCORE);
+        }
+
+        Map<String, Object> durations = Map.of(
+                "yfinance", analysisData.getOrDefault("yfDur", 0L),
+                "pattern", PATTERN_DUR,
+                "gemini", strategy.getOrDefault("duration", 0L));
+        result.put("durations", durations);
+
+        // Copy technical details if present for chart integration
+        if (analysisData.containsKey("patternDetails")) {
+            result.put("patternDetails", analysisData.get("patternDetails"));
+        }
+        if (analysisData.containsKey("pattern")) {
+            result.put("pattern", analysisData.get("pattern"));
+        }
+
+        return result;
+    }
+
+    /**
+     * REST endpoint to dispatch a generated AI report to Telegram.
+     *
+     * @param payload Request body containing ticker and report text.
+     * @return A status map indicating success or failure.
+     */
     @PostMapping("/api/send-telegram")
     @ResponseBody
-    public Map<String, Object> sendToTelegram(@RequestBody Map<String, String> payload) {
+    public final Map<String, Object> sendToTelegram(
+            @RequestBody final Map<String, String> payload) {
         String ticker = payload.get("ticker");
         String report = payload.get("report");
-        boolean success = stockService.sendAiReportToTelegram(ticker, report);
-        return Map.of("success", success);
+        boolean ok = stockService.sendAiReportToTelegram(
+                ticker, report);
+        return Map.of("success", ok);
     }
 
+    /**
+     * REST endpoint to search for stocks across markets.
+     *
+     * @param q      Search term (name or ticker).
+     * @param market Target market designation.
+     * @return A list of matching stock results.
+     */
     @GetMapping("/api/search")
     @ResponseBody
-    public java.util.List<Map<String, String>> searchStocks(@RequestParam String q,
-            @RequestParam(defaultValue = "US") String market) {
+    public final List<Map<String, String>> searchStocks(
+            @RequestParam(name = "q") final String q,
+            @RequestParam(defaultValue = "US") final String market) {
         if ("US".equals(market)) {
             return stockService.searchUsStocks(q);
         } else if ("KR".equals(market)) {

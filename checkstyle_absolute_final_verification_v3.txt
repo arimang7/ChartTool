@@ -1,0 +1,32 @@
+﻿[INFO] Scanning for projects...
+[INFO] 
+[INFO] ----------------------< com.charttool:chart-tool >----------------------
+[INFO] Building chart-tool 0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- checkstyle:3.6.0:check (default-cli) @ chart-tool ---
+[INFO] There are 10 errors reported by Checkstyle 9.3 with sun_checks.xml ruleset.
+[ERROR] src\main\java\com\charttool\controller\StockController.java:[48] (sizes) LineLength: Line is longer than 80 characters (found 87).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[39] (sizes) LineLength: Line is longer than 80 characters (found 85).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[131] (sizes) LineLength: Line is longer than 80 characters (found 92).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[132] (sizes) LineLength: Line is longer than 80 characters (found 89).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[156] (sizes) LineLength: Line is longer than 80 characters (found 86).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[157] (sizes) LineLength: Line is longer than 80 characters (found 97).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[158] (sizes) LineLength: Line is longer than 80 characters (found 87).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[159] (sizes) LineLength: Line is longer than 80 characters (found 87).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[169] (sizes) LineLength: Line is longer than 80 characters (found 81).
+[ERROR] src\main\java\com\charttool\service\StockService.java:[235,26] (whitespace) NoWhitespaceAfter: '{' is followed by whitespace.
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.377 s
+[INFO] Finished at: 2026-02-21T17:37:06+09:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-checkstyle-plugin:3.6.0:check (default-cli) on project chart-tool: You have 10 Checkstyle violations. -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

@@ -14,8 +14,12 @@ RUN apt-get update && apt-get install -y python3 python3-pip python3-venv && \
     /opt/venv/bin/pip install --no-cache-dir yfinance pandas && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# venv의 python을 기본 python3으로 사용
+# --- 환경 변수 설정 (Spring Boot가 인식) ---
 ENV PATH="/opt/venv/bin:$PATH"
+# Java의 @Value("${app.python.path}") 오버라이드
+ENV APP_PYTHON_PATH=/opt/venv/bin/python3
+# Java의 @Value("${app.python.script-path}") 오버라이드
+ENV APP_PYTHON_SCRIPT_PATH=/app/yfinance_adapter.py
 
 # 빌드된 JAR 복사
 COPY --from=build /app/target/chart-tool-0.0.1-SNAPSHOT.jar app.jar

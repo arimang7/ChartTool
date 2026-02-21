@@ -89,14 +89,14 @@ app:
 
 ### Via Command Line
 
-```bash
+````bash
 # Build the project
 mvn clean install
 
 # Run the application
 mvn spring-boot:run
- - local : mvn spring-boot:run -Dspring-boot.run.profiles=local
-```
+ - local : mvn spring-boot:run "-Dspring-boot.run.profiles=local"
+```"
 
 ### Via IDE
 
@@ -116,3 +116,4 @@ mvn spring-boot:run
 - `GET /api/ai-analysis?ticker={ticker}`: Generates a Gemini AI analysis report (JSON).
 - `POST /api/send-telegram`: Sends the AI report to Telegram.
   - Body: `{"ticker": "...", "report": "..."}`
+````

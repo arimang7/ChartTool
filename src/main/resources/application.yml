@@ -4,8 +4,8 @@ spring:
       client:
         registration:
           google:
-            client-id: ${GOOGLE_CLIENT_ID}
-            client-secret: ${GOOGLE_CLIENT_SECRET}
+            client-id: ${GOOGLE_CLIENT_ID:placeholder}
+            client-secret: ${GOOGLE_CLIENT_SECRET:placeholder}
             scope:
               - openid
               - email
@@ -21,12 +21,12 @@ server:
 
 app:
   gemini:
-    api-key: ${GEMINI_API_KEY}
+    api-key: ${GEMINI_API_KEY:placeholder}
     model: gemini-flash-latest
     base-url: https://generativelanguage.googleapis.com/v1beta/models
   telegram:
-    bot-token: ${TELEGRAM_BOT_TOKEN}
-    chat-id: ${TELEGRAM_CHAT_ID}
+    bot-token: ${TELEGRAM_BOT_TOKEN:placeholder}
+    chat-id: ${TELEGRAM_CHAT_ID:placeholder}
     api-url: https://api.telegram.org/bot/
 
 logging:

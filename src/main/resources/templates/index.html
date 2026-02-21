@@ -333,9 +333,11 @@
                 </div>
             </div>
 
-            <div id="ai-btn-container">
+            <div id="ai-btn-container" style="display: flex; gap: 10px; margin-bottom: 20px;">
                 <button type="button" class="btn-ai" th:data-ticker="${ticker}"
-                    onclick="runAiAnalysis(this.getAttribute('data-ticker'))">분석 실행하기</button>
+                    onclick="runAiAnalysis(this.getAttribute('data-ticker'), 'ai')" style="flex: 1;">AI 분석 실행</button>
+                <button type="button" class="btn-ai" th:data-ticker="${ticker}"
+                    onclick="runAiAnalysis(this.getAttribute('data-ticker'), 'dcf')" style="flex: 1; background: #007bff;">DCF 전문 분석</button>
             </div>
 
             <div id="ai-report-container" class="ai-report" style="display: none;">
@@ -455,15 +457,33 @@
         Plotly.newPlot('chart', [priceTrace, upperTrace, lowerTrace], layout);
         setTimeout(() => { Plotly.Plots.resize('chart'); }, 500);
 
-        // AI 분석 실행 및 단계 표시 로직
+        // AI 및 DCF 분석 실행 로직
         let analysisStartTime;
         let timerInterval;
 
-        function runAiAnalysis(ticker) {
+        function runAiAnalysis(ticker, type) {
             const statusDiv = document.getElementById('ai-status');
             const btnContainer = document.getElementById('ai-btn-container');
             const timerDiv = document.getElementById('ai-timer');
             const timerSec = document.getElementById('timer-sec');
+            const scoreHeader = document.getElementById('ai-score-header');
+
+            btnContainer.style.display = 'none';
+            statusDiv.style.display = 'block';
+            timerDiv.style.display = 'inline-block';
+            
+            // 타입에 따라 표시 문구 변경
+            if (type === 'dcf') {
+                document.getElementById('step-1').innerHTML = '<span><i class="far fa-circle"></i> 📂 DCF 분석 로직 로드 중</span><span class="step-time"></span>';
+                document.getElementById('step-2').innerHTML = '<span><i class="far fa-circle"></i> 📊 재무 데이터 및 시장 지표 취합 중</span><span class="step-time"></span>';
+                document.getElementById('step-3').innerHTML = '<span><i class="far fa-circle"></i> 🤖 Gemini LLM DCF 전문 분석 중</span><span class="step-time"></span>';
+                scoreHeader.innerHTML = 'DCF 분석 결과 로딩 중...';
+            } else {
+                document.getElementById('step-1').innerHTML = '<span><i class="far fa-circle"></i> 📊 기술적 지표 및 증권사 리포트 분석</span><span class="step-time"></span>';
+                document.getElementById('step-2').innerHTML = '<span><i class="far fa-circle"></i> 📐 하모닉 패턴 탐색</span><span class="step-time"></span>';
+                document.getElementById('step-3').innerHTML = '<span><i class="far fa-circle"></i> 🤖 Gemini LLM 전략 생성</span><span class="step-time"></span>';
+                scoreHeader.innerHTML = 'AI 분석 결과 로딩 중...';
+            }
 
             // 초기화
             btnContainer.style.display = 'none';
@@ -501,13 +521,14 @@
                 }, step.delay);
             });
 
-            // API 호출을 애니메이션과 동시에 즉시 시작 (병렬 처리)
-            fetchAiAnalysis(ticker);
+            // API 호출을 애니메이션과 동시에 즉시 시작
+            fetchAiAnalysis(ticker, type);
         }
 
-        async function fetchAiAnalysis(ticker) {
+        async function fetchAiAnalysis(ticker, type) {
             try {
-                const response = await fetch(`/api/ai-analysis?ticker=${ticker}`);
+                const endpoint = type === 'dcf' ? `/api/dcf-analysis?ticker=${ticker}` : `/api/ai-analysis?ticker=${ticker}`;
+                const response = await fetch(endpoint);
                 const data = await response.json();
 
                 // 서버 응답이 오면 타이머 중지
@@ -544,13 +565,16 @@
                     const scoreHeader = document.getElementById('ai-score-header');
                     const contentDiv = document.getElementById('ai-content');
 
-                    scoreHeader.innerText = `AI 분석 신뢰도 점수: ${data.confidenceScore}점`;
+                    const titlePrefix = type === 'dcf' ? 'DCF 전문 분석' : '일반 AI 분석';
+                    scoreHeader.innerText = `[${titlePrefix}] 신뢰도 점수: ${data.confidenceScore}점`;
                     contentDiv.innerHTML = marked.parse(data.report.trim());
-                    latestReport = data.report; // 텔레그램 전송을 위해 저장
+                    latestReport = `**[${titlePrefix}] ${ticker} 분석 결과**\n\n` + data.report; // 텔레그램 전송을 위해 저장
                     reportContainer.style.display = 'block';
 
-                    // 차트에 패턴 및 타점 표시
-                    updateChartWithAiData(data);
+                    // 차트에 패턴 및 타점 표시 (일반 AI 분석의 경우에만)
+                    if (type === 'ai') {
+                        updateChartWithAiData(data);
+                    }
                 }, 500);
 
             } catch (error) {
