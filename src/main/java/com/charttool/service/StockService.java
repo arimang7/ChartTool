@@ -20,6 +20,7 @@ import org.ta4j.core.indicators.statistics.StandardDeviationIndicator;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -28,6 +29,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 
 /**
@@ -86,6 +89,23 @@ public class StockService {
             .defaultHeader("User-Agent", "Mozilla/5.0")
             .build();
 
+    /** Cache for stock analysis results (TTL not implemented for simplicity). */
+    private final Map<String, Map<String, Object>> analysisCache = new ConcurrentHashMap<>();
+
+    /** Cache for AI strategy reports. */
+    private final Map<String, Map<String, Object>> aiReportCache = new ConcurrentHashMap<>();
+
+    /**
+     * Semaphore set to 1 to strictly serialize AI requests and avoid 503 errors.
+     */
+    private final Semaphore aiSemaphore = new Semaphore(1);
+
+    /** WebClient timeout duration. */
+    private static final Duration WEB_TIMEOUT = Duration.ofSeconds(60);
+
+    /** Maximum retries for AI generation. */
+    private static final int MAX_RETRIES = 2;
+
     public StockService(final AppProperties appProperties) {
         this.appProperties = appProperties;
     }
@@ -105,6 +125,11 @@ public class StockService {
      */
     @SuppressWarnings("unchecked")
     public final Map<String, Object> getAnalysis(final String ticker) {
+        // Simple cache check: if data exists from last 5 minutes (mocked)
+        // Here we just use a simple map for demonstration.
+        if (analysisCache.containsKey(ticker)) {
+            return analysisCache.get(ticker);
+        }
         try {
             long s0 = System.currentTimeMillis();
             String resJson = runPythonYfinance(ticker);
@@ -177,6 +202,7 @@ public class StockService {
             map.put("confidenceScore", INIT_SCORE);
             map.put("yfDur", s1 - s0);
 
+            analysisCache.put(ticker, map);
             return map;
         } catch (Exception e) {
             LOGGER.error("Failed to analyze stock {}: {}",
@@ -216,9 +242,9 @@ public class StockService {
      */
     private String runPythonYfinance(final String ticker) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder(
-            appProperties.getPython().getPath(),
-            appProperties.getPython().getScriptPath(),
-            ticker, "1y");
+                appProperties.getPython().getPath(),
+                appProperties.getPython().getScriptPath(),
+                ticker, "1y");
         processBuilder.directory(new File(System.getProperty("user.dir")));
         Process process = processBuilder.start();
 
@@ -297,25 +323,64 @@ public class StockService {
         Map<String, Object> body = Map.of("contents", List.of(Map.of("parts",
                 List.of(Map.of("text", prompt)))));
 
-        try {
-                Map<?, ?> resp = webClient.post()
-                    .uri(appProperties.getGemini().getBaseUrl() + "/"
-                        + appProperties.getGemini().getModel()
-                        + ":generateContent?key="
-                        + appProperties.getGemini().getApiKey())
-                    .bodyValue(body)
-                    .retrieve().bodyToMono(Map.class).block();
-
-            String text = extractText(resp);
-            return Map.of("report", text, "duration",
-                    System.currentTimeMillis() - start,
-                    "confidenceScore", INIT_SCORE);
-        } catch (Exception e) {
-            LOGGER.error("Gemini AI failed: {}", e.getMessage());
-            return Map.of("report", "Fallback AI Strategy for " + ticker,
-                    "duration", MOCK_DUR,
-                    "confidenceScore", INIT_SCORE);
+        String cacheKey = "general_" + ticker;
+        if (aiReportCache.containsKey(cacheKey)) {
+            LOGGER.info("Returning cached Gemini report for {}", ticker);
+            return aiReportCache.get(cacheKey);
         }
+
+        int attempt = 0;
+        Exception lastEx = null;
+
+        while (attempt <= MAX_RETRIES) {
+            try {
+                if (aiSemaphore.availablePermits() == 0) {
+                    LOGGER.info("Queueing Gemini request for {} (Attempt: {})",
+                            ticker, attempt + 1);
+                }
+                aiSemaphore.acquire();
+                try {
+                    LOGGER.info("Calling Gemini for {}...", ticker);
+                    Map<?, ?> resp = webClient.post()
+                            .uri(appProperties.getGemini().getBaseUrl() + "/"
+                                    + appProperties.getGemini().getModel()
+                                    + ":generateContent?key="
+                                    + appProperties.getGemini().getApiKey())
+                            .bodyValue(body)
+                            .retrieve().bodyToMono(Map.class)
+                            .block(WEB_TIMEOUT);
+
+                    String text = extractText(resp);
+                    Map<String, Object> result = Map.of("report", text,
+                            "duration", System.currentTimeMillis() - start,
+                            "confidenceScore", INIT_SCORE);
+                    aiReportCache.put(cacheKey, result);
+                    LOGGER.info("Gemini success for {}", ticker);
+                    return result;
+                } finally {
+                    aiSemaphore.release();
+                }
+            } catch (Exception e) {
+                lastEx = e;
+                attempt++;
+                LOGGER.warn("Gemini attempt {} failed for {}: {}",
+                        attempt, ticker, e.getMessage());
+                if (attempt <= MAX_RETRIES) {
+                    try {
+                        Thread.sleep(2000L * attempt); // Exponential backoff
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+
+        LOGGER.error("Gemini AI failed after {} retries: {}",
+                MAX_RETRIES, lastEx != null ? lastEx.getMessage() : "Unknown");
+        return Map.of("report",
+                "Fallback AI Strategy (Error: " + (lastEx != null ? lastEx.getMessage() : "Timeout") + ")",
+                "duration", MOCK_DUR,
+                "confidenceScore", INIT_SCORE);
     }
 
     /**
@@ -340,25 +405,64 @@ public class StockService {
         Map<String, Object> b = Map.of("contents", List.of(Map.of("parts",
                 List.of(Map.of("text", prompt)))));
 
-        try {
-                Map<?, ?> resp = webClient.post()
-                    .uri(appProperties.getGemini().getBaseUrl() + "/"
-                        + appProperties.getGemini().getModel()
-                        + ":generateContent?key="
-                        + appProperties.getGemini().getApiKey())
-                    .bodyValue(b)
-                    .retrieve().bodyToMono(Map.class).block();
-
-            String text = extractText(resp);
-            return Map.of("report", text,
-                    "duration", System.currentTimeMillis() - start,
-                    "confidenceScore", INIT_SCORE);
-        } catch (Exception e) {
-            LOGGER.error("DCF AI failed: {}", e.getMessage());
-            return Map.of("report", "Fallback DCF Analysis for " + ticker,
-                    "duration", MOCK_DUR,
-                    "confidenceScore", INIT_SCORE);
+        String cacheKey = "dcf_" + ticker;
+        if (aiReportCache.containsKey(cacheKey)) {
+            LOGGER.info("Returning cached DCF report for {}", ticker);
+            return aiReportCache.get(cacheKey);
         }
+
+        int attempt = 0;
+        Exception lastEx = null;
+
+        while (attempt <= MAX_RETRIES) {
+            try {
+                if (aiSemaphore.availablePermits() == 0) {
+                    LOGGER.info("Queueing DCF request for {} (Attempt: {})",
+                            ticker, attempt + 1);
+                }
+                aiSemaphore.acquire();
+                try {
+                    LOGGER.info("Calling DCF Gemini for {}...", ticker);
+                    Map<?, ?> resp = webClient.post()
+                            .uri(appProperties.getGemini().getBaseUrl() + "/"
+                                    + appProperties.getGemini().getModel()
+                                    + ":generateContent?key="
+                                    + appProperties.getGemini().getApiKey())
+                            .bodyValue(b)
+                            .retrieve().bodyToMono(Map.class)
+                            .block(WEB_TIMEOUT);
+
+                    String text = extractText(resp);
+                    Map<String, Object> result = Map.of("report", text,
+                            "duration", System.currentTimeMillis() - start,
+                            "confidenceScore", INIT_SCORE);
+                    aiReportCache.put(cacheKey, result);
+                    LOGGER.info("DCF success for {}", ticker);
+                    return result;
+                } finally {
+                    aiSemaphore.release();
+                }
+            } catch (Exception e) {
+                lastEx = e;
+                attempt++;
+                LOGGER.warn("DCF attempt {} failed for {}: {}",
+                        attempt, ticker, e.getMessage());
+                if (attempt <= MAX_RETRIES) {
+                    try {
+                        Thread.sleep(2000L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+
+        LOGGER.error("DCF AI failed after {} retries: {}",
+                MAX_RETRIES, lastEx != null ? lastEx.getMessage() : "Unknown");
+        return Map.of("report",
+                "Fallback DCF Analysis (Error: " + (lastEx != null ? lastEx.getMessage() : "Timeout") + ")",
+                "duration", MOCK_DUR,
+                "confidenceScore", INIT_SCORE);
     }
 
     /**
@@ -395,10 +499,10 @@ public class StockService {
             final String report) {
         try {
             LOGGER.info("Sending report to Telegram for {}", ticker);
-                String url = appProperties.getTelegram().getApiUrl()
+            String url = appProperties.getTelegram().getApiUrl()
                     + appProperties.getTelegram().getBotToken()
                     + "/sendMessage";
-                Map<String, String> body = Map.of(
+            Map<String, String> body = Map.of(
                     "chat_id", appProperties.getTelegram().getChatId(),
                     "text", String.format("[%s Analysis]\n%s", ticker, report));
             webClient.post().uri(url).bodyValue(body)
