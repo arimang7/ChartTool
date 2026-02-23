@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import com.charttool.config.AppProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.ta4j.core.BarSeries;
@@ -73,39 +73,7 @@ public class StockService {
     /** Default RSI value. */
     private static final double DEFAULT_RSI = 50.0;
 
-    /** Gemini API Key. */
-    @Value("${app.gemini.api-key:placeholder}")
-    private String geminiApiKey;
-
-    /** Gemini Model identifier. */
-    @Value("${app.gemini.model:gemini-flash-latest}")
-    private String geminiModel;
-
-    /** Base URL for Gemini API. */
-    @Value("${app.gemini.base-url:"
-            + "https://generativelanguage.googleapis.com/v1beta/models}")
-    private String geminiBaseUrl;
-
-    /** Telegram Bot Token. */
-    @Value("${app.telegram.bot-token:"
-            + "8588513194:AAH6RjMLfLlUN-Tt2TkHzQ_lezaEnOjXDPI}")
-    private String telegramBotToken;
-
-    /** Target Chat ID. */
-    @Value("${app.telegram.chat-id:437702441}")
-    private String telegramChatId;
-
-    /** Base URL for Telegram. */
-    @Value("${app.telegram.api-url:https://api.telegram.org/bot/}")
-    private String telegramApiUrl;
-
-    /** Path to the Python interpreter. */
-    @Value("${app.python.path:../.venv/Scripts/python.exe}")
-    private String pythonPath;
-
-    /** Path to the yfinance adapter Python script. */
-    @Value("${app.python.script-path:src/main/resources/yfinance_adapter.py}")
-    private String yfinanceScriptPath;
+    private final AppProperties appProperties;
 
     /** Shared JSON object mapper. */
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -117,6 +85,10 @@ public class StockService {
     private final WebClient webClient = WebClient.builder()
             .defaultHeader("User-Agent", "Mozilla/5.0")
             .build();
+
+    public StockService(final AppProperties appProperties) {
+        this.appProperties = appProperties;
+    }
 
     /**
      * Type reference for parsing generic Map structures from JSON.
@@ -244,7 +216,9 @@ public class StockService {
      */
     private String runPythonYfinance(final String ticker) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder(
-                pythonPath, yfinanceScriptPath, ticker, "1y");
+            appProperties.getPython().getPath(),
+            appProperties.getPython().getScriptPath(),
+            ticker, "1y");
         processBuilder.directory(new File(System.getProperty("user.dir")));
         Process process = processBuilder.start();
 
@@ -324,9 +298,11 @@ public class StockService {
                 List.of(Map.of("text", prompt)))));
 
         try {
-            Map<?, ?> resp = webClient.post()
-                    .uri(geminiBaseUrl + "/" + geminiModel
-                            + ":generateContent?key=" + geminiApiKey)
+                Map<?, ?> resp = webClient.post()
+                    .uri(appProperties.getGemini().getBaseUrl() + "/"
+                        + appProperties.getGemini().getModel()
+                        + ":generateContent?key="
+                        + appProperties.getGemini().getApiKey())
                     .bodyValue(body)
                     .retrieve().bodyToMono(Map.class).block();
 
@@ -365,9 +341,11 @@ public class StockService {
                 List.of(Map.of("text", prompt)))));
 
         try {
-            Map<?, ?> resp = webClient.post()
-                    .uri(geminiBaseUrl + "/" + geminiModel
-                            + ":generateContent?key=" + geminiApiKey)
+                Map<?, ?> resp = webClient.post()
+                    .uri(appProperties.getGemini().getBaseUrl() + "/"
+                        + appProperties.getGemini().getModel()
+                        + ":generateContent?key="
+                        + appProperties.getGemini().getApiKey())
                     .bodyValue(b)
                     .retrieve().bodyToMono(Map.class).block();
 
@@ -417,9 +395,11 @@ public class StockService {
             final String report) {
         try {
             LOGGER.info("Sending report to Telegram for {}", ticker);
-            String url = telegramApiUrl + telegramBotToken + "/sendMessage";
-            Map<String, String> body = Map.of(
-                    "chat_id", telegramChatId,
+                String url = appProperties.getTelegram().getApiUrl()
+                    + appProperties.getTelegram().getBotToken()
+                    + "/sendMessage";
+                Map<String, String> body = Map.of(
+                    "chat_id", appProperties.getTelegram().getChatId(),
                     "text", String.format("[%s Analysis]\n%s", ticker, report));
             webClient.post().uri(url).bodyValue(body)
                     .retrieve().bodyToMono(Map.class).block();
