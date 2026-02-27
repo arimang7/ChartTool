@@ -318,7 +318,12 @@ public class StockService {
                 + " (" + ticker + ") is exactly " + p + " " + cur + ". "
                 + "Your internal information might be outdated. "
                 + "DO NOT use any other price. Perform analysis based on "
-                + p + " " + cur + " and respond in Korean.";
+                + p + " " + cur + " and respond in Korean. "
+                + "분석 결론에 반드시 구체적 진입가, 1차 목표가, 2차 목표가, 손절가 수치를 포함하세요. "
+                + "반드시 리포트 마지막에 아래 형식의 JSON 블록을 추가하세요:\n"
+                + "---PRICES_JSON---\n"
+                + "{\"entryPrice\": 진입가숫자, \"target1\": 1차목표가숫자, "
+                + "\"target2\": 2차목표가숫자, \"stopLoss\": 손절가숫자}";
 
         Map<String, Object> body = Map.of("contents", List.of(Map.of("parts",
                 List.of(Map.of("text", prompt)))));
@@ -401,7 +406,11 @@ public class StockService {
                 + ". The ONLY valid current market price is " + p + " " + cur
                 + ". DO NOT use your internal data (e.g., 56,000 KRW). "
                 + "Compute fair price (적정주가 산출) and compare it specifically "
-                + "to " + p + ". Respond in Korean.";
+                + "to " + p + ". Respond in Korean. "
+                + "반드시 리포트 마지막에 아래 형식의 JSON 블록을 추가하세요:\n"
+                + "---PRICES_JSON---\n"
+                + "{\"fairValue\": 적정주가숫자, \"bullishValue\": 강세시적정가숫자, "
+                + "\"bearishValue\": 약세시적정가숫자}";
         Map<String, Object> b = Map.of("contents", List.of(Map.of("parts",
                 List.of(Map.of("text", prompt)))));
 
