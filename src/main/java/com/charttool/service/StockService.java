@@ -591,10 +591,13 @@ public class StockService {
                     "chat_id", appProperties.getTelegram().getChatId(),
                     "text", String.format("[%s Analysis]\n%s", ticker, report));
             webClient.post().uri(url).bodyValue(body)
-                    .retrieve().bodyToMono(Map.class).block();
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .retry(3) // 3회 재시도 추가
+                    .block(Duration.ofSeconds(15)); // 15초 타임아웃 추가
             return true;
         } catch (Exception e) {
-            LOGGER.error("Failed to send Telegram: {}", e.getMessage());
+            LOGGER.error("Failed to send Telegram for {}: {}", ticker, e.getMessage());
             return false;
         }
     }
