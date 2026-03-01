@@ -77,7 +77,9 @@ public class StockController {
             }
 
             model.addAttribute("ticker", processedTicker);
-            String sys = "KR".equals(marker) ? "₩" : "$";
+            // .KS나 .KQ로 끝나면 한국 원화로 표시 (시장 선택과 상관없이)
+            String sys = (processedTicker.endsWith(".KS") || processedTicker.endsWith(".KQ")) ? "₩"
+                    : ("KR".equals(marker) ? "₩" : "$");
             model.addAttribute("currencySymbol", sys);
             model.addAttribute("data",
                     stockService.getAnalysis(processedTicker));

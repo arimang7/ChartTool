@@ -269,8 +269,10 @@ public class StockService {
                 }
             }
 
+            String companyName = fetchKrStockName(tickerDigits);
+
             Map<String, Object> result = Map.of(
-                    "name", tickerDigits, // Name will be updated if yfinance works
+                    "name", companyName,
                     "history", history,
                     "news", List.of());
             return objectMapper.writeValueAsString(result);
@@ -278,6 +280,34 @@ public class StockService {
             LOGGER.error("Naver Finance fetch failed for {}: {}", tickerDigits, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 네이버 실시간 API를 통해 종목명을 조회합니다.
+     */
+    @SuppressWarnings("unchecked")
+    private String fetchKrStockName(String tickerDigits) {
+        try {
+            String url = "https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM_REALTIME:" + tickerDigits;
+            Map<String, Object> resp = webClient.get().uri(url)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(Duration.ofSeconds(5));
+
+            if (resp != null && resp.containsKey("result")) {
+                Map<String, Object> res = (Map<String, Object>) resp.get("result");
+                List<Map<String, Object>> areas = (List<Map<String, Object>>) res.get("areas");
+                if (areas != null && !areas.isEmpty()) {
+                    List<Map<String, Object>> datas = (List<Map<String, Object>>) areas.get(0).get("datas");
+                    if (datas != null && !datas.isEmpty()) {
+                        return (String) datas.get(0).get("nm");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.warn("Failed to fetch KR name for {}: {}", tickerDigits, e.getMessage());
+        }
+        return tickerDigits;
     }
 
     /**
