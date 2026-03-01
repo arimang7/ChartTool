@@ -125,25 +125,51 @@ public class StockService {
      */
     @SuppressWarnings("unchecked")
     public final Map<String, Object> getAnalysis(final String ticker) {
-        // Simple cache check: if data exists from last 5 minutes (mocked)
-        // Here we just use a simple map for demonstration.
         if (analysisCache.containsKey(ticker)) {
             return analysisCache.get(ticker);
         }
         try {
             long s0 = System.currentTimeMillis();
-            String resJson = runPythonYfinance(ticker);
+            String resJson = null;
+
+            // 1. 한국 종목(6자리 숫자)인 경우 Naver Finance 직접 호출 (Python 의존성 제거)
+            if (ticker.matches("\\d{6}(\\.KS|\\.KQ)?")) {
+                String digits = ticker.substring(0, 6);
+                resJson = fetchNaverDataInJava(digits);
+            }
+
+            // 2. Naver 데이터가 없거나 US 종목인 경우 Python yfinance 실행
+            if (resJson == null) {
+                try {
+                    resJson = runPythonYfinance(ticker);
+                } catch (Exception pyEx) {
+                    LOGGER.warn("Python yfinance failed for {}: {}. Attempting empty analysis.",
+                            ticker, pyEx.getMessage());
+                }
+            }
+
+            if (resJson == null) {
+                return getEmptyAnalysis();
+            }
+
             long s1 = System.currentTimeMillis();
 
             Map<String, Object> raw = objectMapper.readValue(resJson,
                     new MapTypeReference());
-            List<Map<String, Object>> h = // split
-                    (List<Map<String, Object>>) raw.get("history");
-            List<Map<String, Object>> n = // split
-                    (List<Map<String, Object>>) raw.get("news");
 
-            BarSeries series = new BaseBarSeriesBuilder().withName(ticker)
-                    .build();
+            if (raw.containsKey("error")) {
+                LOGGER.error("Data error for {}: {}", ticker, raw.get("error"));
+                return getEmptyAnalysis();
+            }
+
+            List<Map<String, Object>> h = (List<Map<String, Object>>) raw.get("history");
+            List<Map<String, Object>> n = (List<Map<String, Object>>) raw.getOrDefault("news", List.of());
+
+            if (h == null || h.isEmpty()) {
+                return getEmptyAnalysis();
+            }
+
+            BarSeries series = new BaseBarSeriesBuilder().withName(ticker).build();
             List<Map<String, Object>> procHist = new ArrayList<>();
 
             for (Map<String, Object> day : h) {
@@ -164,14 +190,10 @@ public class StockService {
             ClosePriceIndicator cp = new ClosePriceIndicator(series);
             RSIIndicator rsi = new RSIIndicator(cp, RSI_PERIOD);
             SMAIndicator sma = new SMAIndicator(cp, BOLLINGER_WINDOW);
-            BollingerBandsMiddleIndicator bm = // split
-                    new BollingerBandsMiddleIndicator(sma);
-            StandardDeviationIndicator sd = // split
-                    new StandardDeviationIndicator(cp, BOLLINGER_WINDOW);
-            BollingerBandsUpperIndicator bu = // split
-                    new BollingerBandsUpperIndicator(bm, sd);
-            BollingerBandsLowerIndicator bl = // split
-                    new BollingerBandsLowerIndicator(bm, sd);
+            BollingerBandsMiddleIndicator bm = new BollingerBandsMiddleIndicator(sma);
+            StandardDeviationIndicator sd = new StandardDeviationIndicator(cp, BOLLINGER_WINDOW);
+            BollingerBandsUpperIndicator bu = new BollingerBandsUpperIndicator(bm, sd);
+            BollingerBandsLowerIndicator bl = new BollingerBandsLowerIndicator(bm, sd);
 
             int lastIdx = series.getEndIndex();
             for (int i = 0; i < procHist.size(); i++) {
@@ -181,8 +203,7 @@ public class StockService {
 
             List<Integer> spikes = new ArrayList<>();
             for (int i = BOLLINGER_WINDOW; i <= lastIdx; i++) {
-                if (series.getBar(i).getVolume().doubleValue() // split
-                        > VOL_THRESHOLD) {
+                if (series.getBar(i).getVolume().doubleValue() > VOL_THRESHOLD) {
                     spikes.add(i);
                 }
             }
@@ -198,16 +219,64 @@ public class StockService {
             map.put("pattern", patt != null ? patt.get("type") : "none");
             map.put("patternDetails", patt);
             map.put("spikes", spikes);
-            map.put("name", raw.get("name"));
+            map.put("name", raw.getOrDefault("name", ticker));
             map.put("confidenceScore", INIT_SCORE);
             map.put("yfDur", s1 - s0);
 
             analysisCache.put(ticker, map);
             return map;
         } catch (Exception e) {
-            LOGGER.error("Failed to analyze stock {}: {}",
-                    ticker, e.getMessage());
+            LOGGER.error("Failed to analyze stock {}: {}", ticker, e.getMessage(), e);
             return getEmptyAnalysis();
+        }
+    }
+
+    /**
+     * 한국 주식 데이터를 Naver Finance XML API를 통해 Java에서 직접 가져옵니다.
+     * 
+     * @param tickerDigits 6자리 주식 코드
+     * @return JSON 형식의 데이터 문자열 또는 null
+     */
+    private String fetchNaverDataInJava(String tickerDigits) {
+        try {
+            LOGGER.info("Fetching Naver Finance data for {} via WebClient", tickerDigits);
+            String url = "https://fchart.stock.naver.com/sise.naver?symbol=" + tickerDigits
+                    + "&timeframe=day&count=250&requestType=0";
+
+            String xml = webClient.get().uri(url)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(WEB_TIMEOUT);
+
+            if (xml == null || !xml.contains("<item"))
+                return null;
+
+            // Simple XML Parsing (Regex or splitting for speed/simplicity)
+            List<Map<String, Object>> history = new ArrayList<>();
+            String[] items = xml.split("<item data=\"");
+            for (int i = 1; i < items.length; i++) {
+                String data = items[i].split("\"")[0];
+                String[] p = data.split("\\|");
+                if (p.length >= 6) {
+                    String d = p[0];
+                    history.add(Map.of(
+                            "date", d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6),
+                            "open", Double.parseDouble(p[1]),
+                            "high", Double.parseDouble(p[2]),
+                            "low", Double.parseDouble(p[3]),
+                            "close", Double.parseDouble(p[4]),
+                            "volume", Long.parseLong(p[5])));
+                }
+            }
+
+            Map<String, Object> result = Map.of(
+                    "name", tickerDigits, // Name will be updated if yfinance works
+                    "history", history,
+                    "news", List.of());
+            return objectMapper.writeValueAsString(result);
+        } catch (Exception e) {
+            LOGGER.error("Naver Finance fetch failed for {}: {}", tickerDigits, e.getMessage());
+            return null;
         }
     }
 
@@ -235,33 +304,40 @@ public class StockService {
 
     /**
      * Executes the external Python script to retrieve market data.
-     *
-     * @param ticker The stock ticker symbol.
-     * @return The JSON formatted output from the Python script.
-     * @throws Exception If process execution fails.
      */
     private String runPythonYfinance(final String ticker) throws Exception {
-        ProcessBuilder processBuilder = new ProcessBuilder(
-                appProperties.getPython().getPath(),
-                appProperties.getPython().getScriptPath(),
-                ticker, "1y");
-        processBuilder.directory(new File(System.getProperty("user.dir")));
-        Process process = processBuilder.start();
+        String pythonPath = appProperties.getPython().getPath();
+        String scriptPath = appProperties.getPython().getScriptPath();
 
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream()))) {
-            StringBuilder output = new StringBuilder();
+        LOGGER.info("Running Python: {} {} {}", pythonPath, scriptPath, ticker);
+
+        ProcessBuilder pb = new ProcessBuilder(pythonPath, scriptPath, ticker, "1y");
+        pb.directory(new File(System.getProperty("user.dir")));
+        pb.redirectErrorStream(true); // 에러 출력물을 표준 출력으로 합침
+
+        Process process = pb.start();
+        StringBuilder output = new StringBuilder();
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line);
             }
-            process.waitFor();
-            String out = output.toString();
-            if (out.isEmpty()) {
-                throw new RuntimeException("Python script returned no output");
-            }
-            return out;
         }
+
+        int exitCode = process.waitFor();
+        String outStr = output.toString().trim();
+
+        if (exitCode != 0) {
+            LOGGER.error("Python script exited with code {}: {}", exitCode, outStr);
+            throw new RuntimeException("Python execution failed (Code " + exitCode + ")");
+        }
+
+        if (outStr.isEmpty()) {
+            throw new RuntimeException("Python script returned empty output");
+        }
+
+        return outStr;
     }
 
     /**
