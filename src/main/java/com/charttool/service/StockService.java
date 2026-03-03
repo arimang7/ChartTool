@@ -84,9 +84,20 @@ public class StockService {
     /** Random utility for simulation purposes. */
     private final Random random = new Random();
 
+    /** Yahoo Finance v8 API base URLs */
+    private static final String YF_QUERY1 = "https://query1.finance.yahoo.com";
+    private static final String YF_QUERY2 = "https://query2.finance.yahoo.com";
+
     /** WebClient for external API calls. */
     private final WebClient webClient = WebClient.builder()
-            .defaultHeader("User-Agent", "Mozilla/5.0")
+            .defaultHeader("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            + "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            + "Chrome/124.0.0.0 Safari/537.36")
+            .defaultHeader("Accept", "application/json,text/html,*/*")
+            .defaultHeader("Accept-Language", "en-US,en;q=0.9")
+            .defaultHeader("Referer", "https://finance.yahoo.com/")
+            .codecs(cfg -> cfg.defaultCodecs().maxInMemorySize(10 * 1024 * 1024)) // 10MB
             .build();
 
     /** Cache for stock analysis results (TTL not implemented for simplicity). */
@@ -138,12 +149,22 @@ public class StockService {
                 resJson = fetchNaverDataInJava(digits);
             }
 
-            // 2. Naver 데이터가 없거나 US 종목인 경우 Python yfinance 실행
+            // 2. Naver 데이터가 없거나 US/HK/SH 종목인 경우 Yahoo Finance v8 API 직접 호출
+            if (resJson == null) {
+                try {
+                    resJson = fetchYahooFinanceData(ticker);
+                } catch (Exception yfEx) {
+                    LOGGER.warn("Yahoo Finance direct fetch failed for {}: {}.",
+                            ticker, yfEx.getMessage());
+                }
+            }
+
+            // 3. Yahoo Finance 실패 시 Python yfinance 폴백 시도
             if (resJson == null) {
                 try {
                     resJson = runPythonYfinance(ticker);
                 } catch (Exception pyEx) {
-                    LOGGER.warn("Python yfinance failed for {}: {}. Attempting empty analysis.",
+                    LOGGER.warn("Python yfinance fallback also failed for {}: {}.",
                             ticker, pyEx.getMessage());
                 }
             }
@@ -333,17 +354,161 @@ public class StockService {
     }
 
     /**
-     * Executes the external Python script to retrieve market data.
+     * Yahoo Finance v8 Chart API를 Java WebClient로 직접 호출합니다.
+     * Python 의존성 없이 미국/홍콩/상해/기타 해외 종목 데이터를 가져옵니다.
+     *
+     * @param ticker 종목 심볼 (예: AAPL, 9988.HK, 600519.SS)
+     * @return JSON 형식의 데이터 문자열 또는 null
+     */
+    @SuppressWarnings("unchecked")
+    private String fetchYahooFinanceData(final String ticker) throws Exception {
+        LOGGER.info("Fetching Yahoo Finance Chart API for {}", ticker);
+
+        String chartPath = "/v8/finance/chart/" + ticker
+                + "?interval=1d&range=1y&includePrePost=false";
+
+        Map<?, ?> resp = callYahooApi(chartPath);
+
+        if (resp == null) {
+            throw new RuntimeException("Yahoo Finance returned null response for " + ticker);
+        }
+
+        Map<?, ?> chart = (Map<?, ?>) resp.get("chart");
+        if (chart == null) {
+            throw new RuntimeException("No 'chart' key in Yahoo Finance response");
+        }
+
+        List<?> resultList = (List<?>) chart.get("result");
+        if (resultList == null || resultList.isEmpty()) {
+            Object err = chart.get("error");
+            throw new RuntimeException("No chart results: " + err);
+        }
+
+        Map<?, ?> result = (Map<?, ?>) resultList.get(0);
+        Map<?, ?> meta = (Map<?, ?>) result.get("meta");
+        List<?> timestamps = (List<?>) result.get("timestamp");
+        Map<?, ?> indicators = (Map<?, ?>) result.get("indicators");
+
+        if (timestamps == null || timestamps.isEmpty()) {
+            throw new RuntimeException("Yahoo Finance: no timestamp data for " + ticker);
+        }
+        if (indicators == null) {
+            throw new RuntimeException("Yahoo Finance: no indicators for " + ticker);
+        }
+
+        List<?> quoteList = (List<?>) indicators.get("quote");
+        if (quoteList == null || quoteList.isEmpty()) {
+            throw new RuntimeException("Yahoo Finance: no quote data for " + ticker);
+        }
+        Map<?, ?> quote = (Map<?, ?>) quoteList.get(0);
+
+        List<?> opens = (List<?>) quote.get("open");
+        List<?> highs = (List<?>) quote.get("high");
+        List<?> lows = (List<?>) quote.get("low");
+        List<?> closes = (List<?>) quote.get("close");
+        List<?> volumes = (List<?>) quote.get("volume");
+
+        // meta에서 회사명 추출 (null-safe)
+        String companyName = ticker;
+        if (meta != null) {
+            Object ln = meta.get("longName");
+            Object sn = meta.get("shortName");
+            if (ln instanceof String && !((String) ln).isBlank()) {
+                companyName = (String) ln;
+            } else if (sn instanceof String && !((String) sn).isBlank()) {
+                companyName = (String) sn;
+            }
+        }
+
+        List<Map<String, Object>> history = new ArrayList<>();
+        for (int i = 0; i < timestamps.size(); i++) {
+            Object o = (opens != null && i < opens.size()) ? opens.get(i) : null;
+            Object h = (highs != null && i < highs.size()) ? highs.get(i) : null;
+            Object l = (lows != null && i < lows.size()) ? lows.get(i) : null;
+            Object c = (closes != null && i < closes.size()) ? closes.get(i) : null;
+            Object v = (volumes != null && i < volumes.size()) ? volumes.get(i) : null;
+            // null 데이터(거래 없는 날, 미장 휴일 등) 스킵
+            if (o == null || h == null || l == null || c == null) {
+                continue;
+            }
+            long epochSec = ((Number) timestamps.get(i)).longValue();
+            String dateStr = java.time.Instant.ofEpochSecond(epochSec)
+                    .atZone(ZoneId.of("UTC"))
+                    .toLocalDate()
+                    .toString();
+            Map<String, Object> day = new HashMap<>();
+            day.put("date", dateStr);
+            day.put("open", ((Number) o).doubleValue());
+            day.put("high", ((Number) h).doubleValue());
+            day.put("low", ((Number) l).doubleValue());
+            day.put("close", ((Number) c).doubleValue());
+            day.put("volume", v != null ? ((Number) v).longValue() : 0L);
+            history.add(day);
+        }
+
+        if (history.isEmpty()) {
+            throw new RuntimeException("Yahoo Finance returned empty history for " + ticker);
+        }
+
+        Map<String, Object> dataResult = new HashMap<>();
+        dataResult.put("name", companyName);
+        dataResult.put("history", history);
+        dataResult.put("news", List.of());
+        LOGGER.info("Yahoo Finance fetched {} bars for {} ({})", history.size(), ticker, companyName);
+        return objectMapper.writeValueAsString(dataResult);
+    }
+
+    /**
+     * Yahoo Finance API를 query1 → query2 순으로 호출합니다.
+     * HTTP 4xx/5xx 에러를 graceful하게 처리합니다.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<?, ?> callYahooApi(final String path) throws Exception {
+        // query1 시도
+        try {
+            Map<?, ?> r = webClient.get()
+                    .uri(YF_QUERY1 + path)
+                    .retrieve()
+                    .onStatus(
+                            status -> status.is4xxClientError() || status.is5xxServerError(),
+                            resp -> resp.bodyToMono(String.class).map(body -> {
+                                LOGGER.warn("Yahoo query1 HTTP {}: {}", resp.statusCode(), body);
+                                return new RuntimeException("YF query1 HTTP " + resp.statusCode());
+                            }))
+                    .bodyToMono(Map.class)
+                    .block(WEB_TIMEOUT);
+            if (r != null) {
+                return r;
+            }
+        } catch (Exception e) {
+            LOGGER.warn("query1 failed ({}), trying query2", e.getMessage());
+        }
+        // query2 폴백
+        return webClient.get()
+                .uri(YF_QUERY2 + path)
+                .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        resp -> resp.bodyToMono(String.class).map(body -> {
+                            LOGGER.warn("Yahoo query2 HTTP {}: {}", resp.statusCode(), body);
+                            return new RuntimeException("YF query2 HTTP " + resp.statusCode());
+                        }))
+                .bodyToMono(Map.class)
+                .block(WEB_TIMEOUT);
+    }
+
+    /**
+     * Executes the external Python script to retrieve market data (폴백용).
      */
     private String runPythonYfinance(final String ticker) throws Exception {
         String pythonPath = appProperties.getPython().getPath();
         String scriptPath = appProperties.getPython().getScriptPath();
 
-        LOGGER.info("Running Python: {} {} {}", pythonPath, scriptPath, ticker);
+        LOGGER.info("Running Python fallback: {} {} {}", pythonPath, scriptPath, ticker);
 
         ProcessBuilder pb = new ProcessBuilder(pythonPath, scriptPath, ticker, "1y");
         pb.directory(new File(System.getProperty("user.dir")));
-        pb.redirectErrorStream(true); // 에러 출력물을 표준 출력으로 합침
+        pb.redirectErrorStream(true);
 
         Process process = pb.start();
         StringBuilder output = new StringBuilder();
